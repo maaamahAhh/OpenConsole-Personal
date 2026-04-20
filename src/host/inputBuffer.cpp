@@ -11,7 +11,7 @@
 #include "stream.h"
 #include "../interactivity/inc/ServiceLocator.hpp"
 
-#define INPUT_BUFFER_DEFAULT_INPUT_MODE (ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT | ENABLE_ECHO_INPUT | ENABLE_MOUSE_INPUT)
+#define INPUT_BUFFER_DEFAULT_INPUT_MODE (ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT | ENABLE_ECHO_INPUT | ENABLE_MOUSE_INPUT | ENABLE_EXTENDED_FLAGS)
 
 using Microsoft::Console::Interactivity::ServiceLocator;
 using Microsoft::Console::VirtualTerminal::TerminalInput;
@@ -708,10 +708,29 @@ void InputBuffer::_WriteBuffer(const std::span<const INPUT_RECORD>& inEvents, _O
             // GH#11682: TerminalInput::HandleKey can handle both KeyEvents and Focus events seamlessly
             if (const auto out = _termInput.HandleKey(inEvent))
             {
+                // Debug logging for VT sequence output
+                // if (inEvent.EventType == KEY_EVENT && inEvent.Event.KeyEvent.bKeyDown)
+                // {
+                //     char debugBuf[512];
+                //     sprintf_s(debugBuf, sizeof(debugBuf), "[OpenConsole Debug] VT Output: VK=0x%04X, SeqLen=%zu, Seq=\"%.*ls\"\n",
+                //         inEvent.Event.KeyEvent.wVirtualKeyCode,
+                //         out->size(),
+                //         static_cast<int>(std::min(out->size(), size_t(50))),
+                //         out->data());
+                //     OutputDebugStringA(debugBuf);
+                // }
                 _writeString(*out);
                 eventsWritten++;
                 continue;
             }
+            // else if (inEvent.EventType == KEY_EVENT && inEvent.Event.KeyEvent.bKeyDown)
+            // {
+            //     // Debug: VT mode but no sequence generated
+            //     char debugBuf[256];
+            //     sprintf_s(debugBuf, sizeof(debugBuf), "[OpenConsole Debug] VT Mode - No sequence for VK=0x%04X, storing raw\n",
+            //         inEvent.Event.KeyEvent.wVirtualKeyCode);
+            //     OutputDebugStringA(debugBuf);
+            // }
         }
 
         // we only check for possible coalescing when storing one

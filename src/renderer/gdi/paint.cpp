@@ -3,6 +3,7 @@
 
 #include "precomp.h"
 #include "gdirenderer.hpp"
+#include "BuiltinGlyphs.h"
 
 #include "../inc/unicode.hpp"
 
@@ -450,45 +451,152 @@ bool GdiEngine::FontHasWesternScript(HDC hdc)
 
     if (_cPolyText > 0)
     {
+        // Save the current font to restore later
+        const auto hSavedFont = GetCurrentObject(_hdcMemoryContext, OBJ_FONT);
+        const auto coordFontSize = _GetFontSize();
+
         for (size_t i = 0; i != _cPolyText; ++i)
         {
             const auto& t = _pPolyText[i];
 
-            // The following if/else replicates the essentials of how ExtTextOutW() without ETO_IGNORELANGUAGE works.
-            // See InternalTextOut().
-            //
-            // Unlike the original, we don't check for `GetTextCharacterExtra(hdc) != 0`,
-            // because we don't ever call SetTextCharacterExtra() anyways.
-            //
-            // GH#12294:
-            // Additionally we set ss.fOverrideDirection to TRUE, because we need to present RTL
-            // text in logical order in order to be compatible with applications like `vim -H`.
-            if (_fontHasWesternScript && ScriptIsComplex(t.lpstr, t.n, SIC_COMPLEX) == S_FALSE)
+            // Check if this line contains builtin glyphs that need direct geometric rendering
+            bool hasBuiltinGlyphs = false;
+            for (UINT j = 0; j < t.n; ++j)
             {
-                if (!ExtTextOutW(_hdcMemoryContext, t.x, t.y, t.uiFlags | ETO_IGNORELANGUAGE, &t.rcl, t.lpstr, t.n, t.pdx))
+                if (GdiBuiltinGlyphs::IsBuiltinGlyph(t.lpstr[j]))
                 {
-                    hr = E_FAIL;
+                    hasBuiltinGlyphs = true;
                     break;
+                }
+            }
+
+            if (hasBuiltinGlyphs)
+            {
+                // For lines with builtin glyphs, render character by character
+                // to ensure precise geometric drawing without gaps
+                int currentX = t.x;
+                
+                for (UINT j = 0; j < t.n && SUCCEEDED(hr); ++j)
+                {
+                    const wchar_t ch = t.lpstr[j];
+                    const int charWidth = t.pdx ? t.pdx[j] : coordFontSize.width;
+
+                    if (GdiBuiltinGlyphs::IsBuiltinGlyph(ch))
+                    {
+                        // Draw builtin glyph using direct geometric primitives
+                        // This ensures pixel-perfect rendering for Box Drawing and Block Elements
+                        if (!GdiBuiltinGlyphs::DrawBuiltinGlyph(_hdcMemoryContext, currentX, t.y, charWidth, coordFontSize.height, _lastFg, _lastBg, ch))
+                        {
+                            // Fallback to font rendering if builtin glyph failed
+                            const RECT charRect = { currentX, t.rcl.top, currentX + charWidth, t.rcl.bottom };
+                            if (!ExtTextOutW(_hdcMemoryContext, currentX, t.y, ETO_OPAQUE | ETO_CLIPPED, &charRect, &ch, 1, &charWidth))
+                            {
+                                hr = E_FAIL;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Draw non-builtin characters using font rendering
+                        const RECT charRect = { currentX, t.rcl.top, currentX + charWidth, t.rcl.bottom };
+                        
+                        // Check if we need fallback font for this character
+                        HFONT hFallbackFont = nullptr;
+                        bool usedFallback = false;
+                        
+                        if ((ch >= 0x25A0 && ch <= 0x25FF) ||  // Geometric Shapes
+                            (ch >= 0x2600 && ch <= 0x26FF))    // Miscellaneous Symbols
+                        {
+                            if (SUCCEEDED(_TryGetFallbackFont(ch, &hFallbackFont)) && hFallbackFont != nullptr)
+                            {
+                                SelectFont(_hdcMemoryContext, hFallbackFont);
+                                usedFallback = true;
+                            }
+                        }
+
+                        if (!ExtTextOutW(_hdcMemoryContext, currentX, t.y, ETO_OPAQUE | ETO_CLIPPED, &charRect, &ch, 1, &charWidth))
+                        {
+                            hr = E_FAIL;
+                        }
+
+                        if (usedFallback)
+                        {
+                            SelectFont(_hdcMemoryContext, hSavedFont);
+                        }
+                    }
+
+                    currentX += charWidth;
                 }
             }
             else
             {
-                SCRIPT_STATE ss{};
-                ss.fOverrideDirection = TRUE;
+                // Original rendering path for lines without builtin glyphs
+                // Check for characters that need font fallback
+                bool needsFallback = false;
+                HFONT hFallbackFont = nullptr;
 
-                SCRIPT_STRING_ANALYSIS ssa;
-                hr = ScriptStringAnalyse(_hdcMemoryContext, t.lpstr, t.n, 0, -1, SSA_GLYPHS | SSA_FALLBACK, 0, nullptr, &ss, t.pdx, nullptr, nullptr, &ssa);
-                if (FAILED(hr))
+                for (UINT j = 0; j < t.n && !needsFallback; ++j)
                 {
-                    break;
+                    const wchar_t ch = t.lpstr[j];
+                    // Check for common Unicode ranges that often need fallback:
+                    // - Geometric Shapes (U+25A0-U+25FF)
+                    // - Miscellaneous Symbols (U+2600-U+26FF)
+                    if ((ch >= 0x25A0 && ch <= 0x25FF) ||  // Geometric Shapes
+                        (ch >= 0x2600 && ch <= 0x26FF))    // Miscellaneous Symbols
+                    {
+                        if (SUCCEEDED(_TryGetFallbackFont(ch, &hFallbackFont)) && hFallbackFont != nullptr)
+                        {
+                            needsFallback = true;
+                        }
+                    }
                 }
 
-                hr = ScriptStringOut(ssa, t.x, t.y, t.uiFlags, &t.rcl, 0, 0, FALSE);
-                std::ignore = ScriptStringFree(&ssa);
-                if (FAILED(hr))
+                // Use fallback font if needed
+                if (needsFallback && hFallbackFont != nullptr)
                 {
-                    break;
+                    SelectFont(_hdcMemoryContext, hFallbackFont);
                 }
+
+                // The following if/else replicates the essentials of how ExtTextOutW() without ETO_IGNORELANGUAGE works.
+                // See InternalTextOut().
+                //
+                // Unlike the original, we don't check for `GetTextCharacterExtra(hdc) != 0`,
+                // because we don't ever call SetTextCharacterExtra() anyways.
+                //
+                // GH#12294:
+                // Additionally we set ss.fOverrideDirection to TRUE, because we need to present RTL
+                // text in logical order in order to be compatible with applications like `vim -H`.
+                if (_fontHasWesternScript && ScriptIsComplex(t.lpstr, t.n, SIC_COMPLEX) == S_FALSE)
+                {
+                    if (!ExtTextOutW(_hdcMemoryContext, t.x, t.y, t.uiFlags | ETO_IGNORELANGUAGE, &t.rcl, t.lpstr, t.n, t.pdx))
+                    {
+                        hr = E_FAIL;
+                    }
+                }
+                else
+                {
+                    SCRIPT_STATE ss{};
+                    ss.fOverrideDirection = TRUE;
+
+                    SCRIPT_STRING_ANALYSIS ssa;
+                    hr = ScriptStringAnalyse(_hdcMemoryContext, t.lpstr, t.n, 0, -1, SSA_GLYPHS | SSA_FALLBACK, 0, nullptr, &ss, t.pdx, nullptr, nullptr, &ssa);
+                    if (SUCCEEDED(hr))
+                    {
+                        hr = ScriptStringOut(ssa, t.x, t.y, t.uiFlags, &t.rcl, 0, 0, FALSE);
+                        std::ignore = ScriptStringFree(&ssa);
+                    }
+                }
+
+                // Restore the original font if we used fallback
+                if (needsFallback)
+                {
+                    SelectFont(_hdcMemoryContext, hSavedFont);
+                }
+            }
+
+            if (FAILED(hr))
+            {
+                break;
             }
         }
 

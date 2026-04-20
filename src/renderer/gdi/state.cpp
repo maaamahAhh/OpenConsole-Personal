@@ -818,3 +818,114 @@ bool GdiEngine::_IsWindowValid() const
     return _hwndTargetWindow != INVALID_HANDLE_VALUE &&
            _hwndTargetWindow != nullptr;
 }
+
+// Routine Description:
+// - Checks if a character has a valid glyph in the current font.
+// - Uses GetGlyphIndicesW to detect missing glyphs.
+// Arguments:
+// - ch - The character to check
+// Return Value:
+// - True if the glyph exists, False otherwise.
+bool GdiEngine::_IsGlyphPresent(wchar_t ch) const noexcept
+{
+    if (!_hdcMemoryContext)
+    {
+        return false;
+    }
+
+    WORD glyphIndex = 0;
+    const auto result = GetGlyphIndicesW(_hdcMemoryContext, &ch, 1, &glyphIndex, GGI_MARK_NONEXISTING_GLYPHS);
+    
+    // If the function succeeds and the glyph is not marked as nonexistent
+    return result == 1 && glyphIndex != 0xFFFF;
+}
+
+// Routine Description:
+// - Tries to find a fallback font that can render the given character.
+// - This improves compatibility with Unicode characters like Block Elements.
+// Arguments:
+// - ch - The character that needs a fallback font
+// - pFont - Receives the fallback font handle (caller must not delete it)
+// Return Value:
+// - S_OK if a fallback font was found, S_FALSE if using cached fallback, or error.
+[[nodiscard]] HRESULT GdiEngine::_TryGetFallbackFont(wchar_t ch, HFONT* pFont) noexcept
+{
+    if (!pFont)
+    {
+        return E_INVALIDARG;
+    }
+
+    // First check if the current font already has this glyph
+    if (_IsGlyphPresent(ch))
+    {
+        *pFont = nullptr; // No fallback needed
+        return S_FALSE;
+    }
+
+    // If we have a cached fallback font, check if it has the glyph
+    if (_fallbackFont != nullptr)
+    {
+        // Temporarily select the fallback font to check
+        const auto hOldFont = static_cast<HFONT>(SelectObject(_hdcMemoryContext, _fallbackFont));
+        if (_IsGlyphPresent(ch))
+        {
+            SelectObject(_hdcMemoryContext, hOldFont);
+            *pFont = _fallbackFont;
+            return S_OK;
+        }
+        SelectObject(_hdcMemoryContext, hOldFont);
+    }
+
+    // Try common fonts that have good Unicode coverage
+    static constexpr const wchar_t* fallbackFontNames[] = {
+        L"Segoe UI Symbol",
+        L"Segoe UI Emoji",
+        L"Consolas",
+        L"Courier New",
+        L"Lucida Console",
+        L"Microsoft YaHei",
+        L"SimSun",
+        L"MS Gothic",
+        L"Arial Unicode MS"
+    };
+
+    wil::unique_hfont hFont;
+    LOGFONTW lf = {};
+    lf.lfHeight = _tmFontMetrics.tmHeight;
+    lf.lfWeight = _tmFontMetrics.tmWeight;
+    lf.lfCharSet = DEFAULT_CHARSET;
+    lf.lfPitchAndFamily = FIXED_PITCH | FF_MODERN;
+    lf.lfQuality = CLEARTYPE_QUALITY;
+
+    for (const auto fontName : fallbackFontNames)
+    {
+        wcscpy_s(lf.lfFaceName, fontName);
+        hFont.reset(CreateFontIndirectW(&lf));
+        
+        if (hFont)
+        {
+            // Select and check if this font has the glyph
+            const auto hOldFont = static_cast<HFONT>(SelectObject(_hdcMemoryContext, hFont.get()));
+            if (_IsGlyphPresent(ch))
+            {
+                // Found a working fallback font - cache it
+                if (_fallbackFont != nullptr)
+                {
+                    DeleteObject(_fallbackFont);
+                }
+                _fallbackFont = hFont.get();
+                _fallbackFontName = fontName;
+                *pFont = _fallbackFont;
+                
+                // Don't let the smart pointer delete our cached font
+                hFont.release();
+                return S_OK;
+            }
+            SelectObject(_hdcMemoryContext, hOldFont);
+        }
+    }
+
+    // No fallback font found
+    *pFont = nullptr;
+    return S_FALSE;
+}

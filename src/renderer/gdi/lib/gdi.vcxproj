@@ -11,6 +11,7 @@
   <Import Project="$(SolutionDir)src\common.build.pre.props" />
   <Import Project="$(SolutionDir)src\common.nugetversions.props" />
   <ItemGroup>
+    <ClCompile Include="..\BuiltinGlyphs.cpp" />
     <ClCompile Include="..\invalidate.cpp" />
     <ClCompile Include="..\math.cpp" />
     <ClCompile Include="..\paint.cpp" />
@@ -20,6 +21,7 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\BuiltinGlyphs.h" />
     <ClInclude Include="..\gdirenderer.hpp" />
     <ClInclude Include="..\precomp.h" />
   </ItemGroup>

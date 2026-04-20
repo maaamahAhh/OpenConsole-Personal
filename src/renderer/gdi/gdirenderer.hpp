@@ -178,6 +178,18 @@ namespace Microsoft::Console::Render
 
         std::vector<DWORD> _imageMask;
 
+        // Font fallback support for Unicode characters
+        // When a character is not present in the current font, we try to find
+        // a fallback font that can render it properly.
+        HFONT _fallbackFont = nullptr;
+        std::wstring _fallbackFontName;
+        
+        // Checks if a character has a valid glyph in the current font
+        bool _IsGlyphPresent(wchar_t ch) const noexcept;
+        
+        // Tries to find a fallback font that can render the given character
+        [[nodiscard]] HRESULT _TryGetFallbackFont(wchar_t ch, HFONT* pFont) noexcept;
+
         [[nodiscard]] HRESULT _InvalidCombine(const til::rect* const prc) noexcept;
         [[nodiscard]] HRESULT _InvalidOffset(const til::point* const ppt) noexcept;
         [[nodiscard]] HRESULT _InvalidRestrict() noexcept;

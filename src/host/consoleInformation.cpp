@@ -72,6 +72,13 @@ ULONG CONSOLE_INFORMATION::GetCSRecursionCount() const noexcept
     try
     {
         gci.pInputBuffer = new InputBuffer();
+        
+        // Disable Kitty keyboard protocol by default for better compatibility.
+        // Many modern CLI programs (like AI agents) expect ESC to be sent as a simple
+        // \x1b character, not as a complex CSI sequence like [27;129u.
+        // This matches the behavior when running through ConPTY/Terminal.
+        // See VtIo.cpp for the ConPTY equivalent.
+        gci.pInputBuffer->GetTerminalInput().ForceDisableKittyKeyboardProtocol(true);
     }
     catch (...)
     {
