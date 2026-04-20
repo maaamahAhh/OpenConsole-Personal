@@ -200,19 +200,12 @@ void Window::_UpdateSystemMetrics() const
     // Ensure we have appropriate system metrics before we start constructing the window.
     _UpdateSystemMetrics();
 
-    const auto useDx = pSettings->GetUseDx();
     try
     {
-        if (useDx)
-        {
-            pAtlasEngine = new AtlasEngine();
-            g.pRender->AddRenderEngine(pAtlasEngine);
-        }
-        else
-        {
-            pGdiEngine = new GdiEngine();
-            g.pRender->AddRenderEngine(pGdiEngine);
-        }
+        // Default to AtlasEngine + GDI style, preserving classic Windows CMD appearance
+        pAtlasEngine = new AtlasEngine();
+        pAtlasEngine->SetGdiStyle(true);
+        g.pRender->AddRenderEngine(pAtlasEngine);
     }
     catch (...)
     {

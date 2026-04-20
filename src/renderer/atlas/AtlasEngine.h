@@ -8,6 +8,7 @@
 #include <dxgi1_3.h>
 
 #include "common.h"
+#include "GdiStyleHelper.h"
 
 namespace Microsoft::Console::Render::Atlas
 {
@@ -77,6 +78,10 @@ namespace Microsoft::Console::Render::Atlas
         void SetWarningCallback(std::function<void(HRESULT, wil::zwstring_view)> pfn) noexcept;
         [[nodiscard]] HRESULT SetWindowSize(til::size pixels) noexcept;
         [[nodiscard]] HRESULT UpdateFont(const FontInfoDesired& pfiFontInfoDesired, FontInfo& fiFontInfo, const std::unordered_map<std::wstring_view, float>& features, const std::unordered_map<std::wstring_view, float>& axes) noexcept;
+        
+        // GDI style support
+        void SetGdiStyle(bool enable) noexcept;
+        [[nodiscard]] bool IsGdiStyle() const noexcept { return _isGdiStyle; }
 
     private:
         // AtlasEngine.cpp
@@ -183,6 +188,9 @@ namespace Microsoft::Console::Render::Atlas
             // The position of the viewport inside the text buffer (in cells).
             u16x2 viewportOffset{ 0, 0 };
         } _api;
+        
+        // GDI style state
+        bool _isGdiStyle = false;
     };
 }
 

@@ -440,11 +440,51 @@ void AtlasEngine::SetDisablePartialInvalidation(bool enable) noexcept
     }
 }
 
-void AtlasEngine::SetGraphicsAPI(GraphicsAPI graphicsAPI) noexcept
+void AtlasEngine::SetGraphicsAPI(const GraphicsAPI graphicsAPI) noexcept
 {
     if (_api.s->target->graphicsAPI != graphicsAPI)
     {
         _api.s.write()->target.write()->graphicsAPI = graphicsAPI;
+    }
+}
+
+void AtlasEngine::SetGdiStyle(const bool enable) noexcept
+{
+    if (_isGdiStyle != enable)
+    {
+        _isGdiStyle = enable;
+        
+        if (enable)
+        {
+            // Enable GDI style:
+            // 1. Disable anti-aliasing (simulates GDI's DRAFT_QUALITY)
+            SetAntialiasingMode(D2D1_TEXT_ANTIALIAS_MODE_ALIASED);
+            
+            // 2. Disable transparent background (GDI is opaque)
+            EnableTransparentBackground(false);
+            
+            // 3. Disable all effects
+            SetRetroTerminalEffect(false);
+            SetPixelShaderPath(L"");
+            
+            // 4. Apply GDI style window styles (if window handle exists)
+            if (const auto hwnd = _api.s->target->hwnd)
+            {
+                GdiStyleHelper::ApplyGdiStyle(hwnd);
+            }
+            
+            // 5. Mark font resources for recreation
+            _recreateFontDependentResources();
+        }
+        else
+        {
+            // Restore modern style
+            SetAntialiasingMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
+            EnableTransparentBackground(true);
+            
+            // Recreate font resources
+            _recreateFontDependentResources();
+        }
     }
 }
 
@@ -630,6 +670,65 @@ void AtlasEngine::_resolveFontMetrics(const FontInfoDesired& fontInfoDesired, Fo
     {
         requestedWeight = DWRITE_FONT_WEIGHT_NORMAL;
     }
+    
+    // GDI style mode: use GDI's font metrics calculation method
+    if (_isGdiStyle)
+    {
+        // Create GDI font to get accurate metrics
+        LOGFONTW lf = { 0 };
+        lf.lfHeight = -static_cast<LONG>(requestedSize.height);  // Negative value indicates character height
+        lf.lfWidth = 0;
+        lf.lfEscapement = 0;
+        lf.lfOrientation = 0;
+        lf.lfWeight = requestedWeight;
+        lf.lfItalic = FALSE;
+        lf.lfUnderline = FALSE;
+        lf.lfStrikeOut = FALSE;
+        lf.lfCharSet = DEFAULT_CHARSET;
+        lf.lfOutPrecision = OUT_DEFAULT_PRECIS;
+        lf.lfClipPrecision = CLIP_DEFAULT_PRECIS;
+        lf.lfQuality = DRAFT_QUALITY;  // GDI's DRAFT_QUALITY
+        lf.lfPitchAndFamily = FIXED_PITCH | FF_MODERN;
+        wcscpy_s(lf.lfFaceName, faceName.c_str());
+        
+        wil::unique_hfont hFont(CreateFontIndirectW(&lf));
+        if (hFont)
+        {
+            // Create compatible DC to measure font
+            wil::unique_hdc hdc(CreateCompatibleDC(nullptr));
+            if (hdc)
+            {
+                SelectObject(hdc.get(), hFont.get());
+                
+                // Get font metrics
+                TEXTMETRICW tm;
+                if (GetTextMetricsW(hdc.get(), &tm))
+                {
+                    // Use GDI font metrics
+                    // Directly modify requestedSize, which will affect subsequent cellSize calculations
+                    requestedSize = { tm.tmAveCharWidth, tm.tmHeight };
+                    
+                    // Try to get ABC width (more accurate character width)
+                    ABC abc;
+                    if (GetCharABCWidthsW(hdc.get(), '0', '0', &abc))
+                    {
+                        const auto abcTotal = abc.abcA + abc.abcB + abc.abcC;
+                        if (abcTotal > 0)
+                        {
+                            requestedSize.width = abcTotal;
+                        }
+                    }
+                    
+                    // Key: Calculate fontSize (point) based on GDI measured actual height
+                    // fontSizeInPx = fontSize / 72.0f * dpi
+                    // Therefore fontSize = fontSizeInPx * 72.0f / dpi
+                    const auto dpi = static_cast<f32>(_api.s->font->dpi);
+                    const auto fontSizeInPxGdi = static_cast<f32>(tm.tmHeight);
+                    fontSize = fontSizeInPxGdi * 72.0f / dpi;
+                }
+            }
+        }
+    }
 
     // UpdateFont() (and its NearbyFontLoading feature path specifically) sets `_api.s->font->fontCollection`
     // to a custom font collection that includes .ttf files that are bundled with our app package. See GH#9375.
@@ -767,9 +866,35 @@ void AtlasEngine::_resolveFontMetrics(const FontInfoDesired& fontInfoDesired, Fo
             advanceWidth = static_cast<f32>(glyphMetrics.advanceWidth) * designUnitsPerPx;
         }
     }
+    
+    // GDI style mode: use font metrics calculated by GDI to adjust advanceWidth and advanceHeight
+    if (_isGdiStyle && requestedSize.width > 0 && requestedSize.height > 0)
+    {
+        // GDI's requestedSize is already in pixels, use directly for subsequent calculations
+        advanceWidth = static_cast<f32>(requestedSize.width);
+    }
 
     auto adjustedWidth = std::roundf(fontInfoDesired.GetCellWidth().Resolve(advanceWidth, dpi, fontSizeInPx, advanceWidth));
     auto adjustedHeight = std::roundf(fontInfoDesired.GetCellHeight().Resolve(advanceHeight, dpi, fontSizeInPx, advanceWidth));
+    
+    // GDI style mode: if GDI-calculated values differ significantly from DirectWrite, use GDI values
+    if (_isGdiStyle && requestedSize.width > 0 && requestedSize.height > 0)
+    {
+        // Directly use GDI-measured pixel values as cell size
+        // This ensures font rendering is completely consistent with GDI
+        const auto gdiCellWidth = static_cast<f32>(requestedSize.width);
+        const auto gdiCellHeight = static_cast<f32>(requestedSize.height);
+        
+        // Only replace when difference is significant (to avoid floating-point errors)
+        if (std::abs(adjustedWidth - gdiCellWidth) > 0.5f)
+        {
+            adjustedWidth = gdiCellWidth;
+        }
+        if (std::abs(adjustedHeight - gdiCellHeight) > 0.5f)
+        {
+            adjustedHeight = gdiCellHeight;
+        }
+    }
 
     // Protection against bad user values in GetCellWidth/Y.
     // AtlasEngine fails hard with 0 cell sizes.
