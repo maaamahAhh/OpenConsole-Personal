@@ -347,7 +347,19 @@ TerminalInput::OutputType TerminalInput::HandleKey(const INPUT_RECORD& event)
 
     if (_kittyFlags == 0 || !_encodeKitty(kbd, enc, key))
     {
-        _encodeRegular(enc, key);
+        // Check if modifyOtherKeys mode is enabled
+        if (_inputMode.test(Mode::ModifyOtherKeys))
+        {
+            // Try to encode as modifyOtherKeys first
+            if (!_encodeModifyOtherKeys(enc, key))
+            {
+                _encodeRegular(enc, key);
+            }
+        }
+        else
+        {
+            _encodeRegular(enc, key);
+        }
     }
 
     std::wstring seq;
@@ -1179,6 +1191,87 @@ bool TerminalInput::_formatEncodingHelper(EncodingHelper& enc, std::wstring& seq
 
     return false;
 }
+
+// Routine Description:
+// - Encodes a key event using XTerm modifyOtherKeys protocol
+// - Mode 1: CSI 2 7 ; modifier ; codepoint ~ (for modified keys)
+// - Mode 2: CSI codepoint ; modifier u (for all keys except basic ones)
+// Arguments:
+// - enc - Encoding helper to populate
+// - key - The sanitized key event
+// Return Value:
+// - true if the key was encoded as modifyOtherKeys, false otherwise
+bool TerminalInput::_encodeModifyOtherKeys(EncodingHelper& enc, const SanitizedKeyEvent& key) const noexcept
+{
+    // Only encode key-down events
+    if (!key.keyDown)
+    {
+        return false;
+    }
+
+    // Don't encode modifier keys themselves
+    if (key.virtualKey >= VK_SHIFT && key.virtualKey <= VK_MENU)
+    {
+        return false;
+    }
+
+    // Calculate modifier value (1-16 range as per XTerm spec)
+    // 1 = no modifiers, 2 = Shift, 3 = Alt, 4 = Shift+Alt, 5 = Ctrl, 
+    // 6 = Shift+Ctrl, 7 = Alt+Ctrl, 8 = Shift+Alt+Ctrl
+    uint32_t modifier = 1;
+    if (key.leftCtrlIsReallyPressed || WI_IsFlagSet(key.controlKeyState, RIGHT_CTRL_PRESSED))
+    {
+        modifier += 4;
+    }
+    if (WI_IsAnyFlagSet(key.controlKeyState, ALT_PRESSED))
+    {
+        modifier += 2;
+    }
+    if (WI_IsFlagSet(key.controlKeyState, SHIFT_PRESSED))
+    {
+        modifier += 1;
+    }
+
+    // Get the codepoint to send
+    const auto codepoint = key.codepoint;
+
+    // For basic keys (Ctrl+@ through Ctrl+_, Tab, Enter, Escape), use the traditional encoding
+    // This maintains compatibility with programs that expect these specific sequences
+    const bool isBasicCtrl = (modifier == 5) && (
+        (codepoint >= L'@' && codepoint <= L'_') ||
+        codepoint == L' ' ||
+        codepoint == L'/' ||
+        codepoint == L'?' ||
+        (codepoint >= L'2' && codepoint <= L'8')
+    );
+
+    if (isBasicCtrl)
+    {
+        // Let regular encoding handle basic Ctrl keys
+        return false;
+    }
+
+    // For modified keys or non-basic keys, use modifyOtherKeys format
+    // Format: CSI 2 7 ; modifier ; codepoint ~
+    // This is the "formatOtherKeys: 0" mode (default)
+    enc.csiFinal = L'~';
+    enc.csiUnicodeKeyCode = 27;  // 27 indicates modifyOtherKeys
+    enc.csiModifier = modifier;
+    enc.csiTextAsCodepoint = codepoint;
+
+    return true;
+}
+
+void TerminalInput::SetModifyOtherKeys(const bool enabled) noexcept
+{
+    _inputMode.set(Mode::ModifyOtherKeys, enabled);
+}
+
+bool TerminalInput::IsModifyOtherKeysEnabled() const noexcept
+{
+    return _inputMode.test(Mode::ModifyOtherKeys);
+}
+
 
 void TerminalInput::_formatFallback(KeyboardHelper& kbd, const EncodingHelper& enc, const SanitizedKeyEvent& key, std::wstring& seq) const
 {

@@ -546,6 +546,7 @@ namespace Microsoft::Console::VirtualTerminal::DispatchTypes
         XTERM_BracketedPasteMode = DECPrivateMode(2004),
         SO_SynchronizedOutput = DECPrivateMode(2026),
         GCM_GraphemeClusterMode = DECPrivateMode(2027),
+        XTERM_ModifyOtherKeys = DECPrivateMode(977),  // XTerm modifyOtherKeys mode
         W32IM_Win32InputMode = DECPrivateMode(9001),
     };
 

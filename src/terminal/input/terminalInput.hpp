@@ -44,7 +44,11 @@ namespace Microsoft::Console::VirtualTerminal
 
             FocusEvent,
 
-            AlternateScroll
+            AlternateScroll,
+
+            // XTerm modifyOtherKeys mode
+            // https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h3-Functions-using-CSI-_-ordered-by-the-final-character_s
+            ModifyOtherKeys,
         };
 
         // Kitty keyboard protocol progressive enhancement flags
@@ -81,6 +85,10 @@ namespace Microsoft::Console::VirtualTerminal
         void PushKittyFlags(uint8_t flags);
         void PopKittyFlags(size_t count);
         void ResetKittyKeyboardProtocols() noexcept;
+
+        // XTerm modifyOtherKeys support
+        void SetModifyOtherKeys(bool enabled) noexcept;
+        bool IsModifyOtherKeysEnabled() const noexcept;
 
 #pragma region MouseInput
         // These methods are defined in mouseInput.cpp
@@ -208,6 +216,7 @@ namespace Microsoft::Console::VirtualTerminal
         bool _encodeKitty(KeyboardHelper& kbd, EncodingHelper& enc, const SanitizedKeyEvent& key) noexcept;
         static uint32_t _getKittyFunctionalKeyCode(UINT vkey, WORD scanCode, bool enhanced) noexcept;
         void _encodeRegular(EncodingHelper& enc, const SanitizedKeyEvent& key) const noexcept;
+        bool _encodeModifyOtherKeys(EncodingHelper& enc, const SanitizedKeyEvent& key) const noexcept;
         bool _formatEncodingHelper(EncodingHelper& enc, std::wstring& str) const;
         void _formatFallback(KeyboardHelper& kbd, const EncodingHelper& enc, const SanitizedKeyEvent& key, std::wstring& seq) const;
         static void _stringPushCodepoint(std::wstring& str, uint32_t cp);

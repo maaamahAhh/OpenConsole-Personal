@@ -734,6 +734,11 @@ try
     {
         underlinePenType = PS_DASH;
     }
+    else if (lines.test(GridLines::HyperlinkUnderline))
+    {
+        // Hyperlink underlines are dotted when not hovered
+        underlinePenType = PS_DOT;
+    }
 
     DWORD underlineWidth = _lineMetrics.underlineWidth;
     if (lines.any(GridLines::DoubleUnderline, GridLines::CurlyUnderline))
@@ -767,6 +772,11 @@ try
     }
     else if (lines.test(GridLines::DashedUnderline))
     {
+        return DrawStrokedLine(ptTarget.x, ptTarget.y + _lineMetrics.underlineCenter, widthOfAllCells);
+    }
+    else if (lines.test(GridLines::HyperlinkUnderline))
+    {
+        // Draw hyperlink underline as dotted line (similar to DottedUnderline)
         return DrawStrokedLine(ptTarget.x, ptTarget.y + _lineMetrics.underlineCenter, widthOfAllCells);
     }
 

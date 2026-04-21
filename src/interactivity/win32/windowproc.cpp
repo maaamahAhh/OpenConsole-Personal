@@ -654,6 +654,21 @@ static constexpr TsfDataProvider s_tsfDataProvider;
     case WM_MOUSEWHEEL:
     case WM_MOUSEHWHEEL:
     {
+        // Handle hyperlink hover detection for WM_MOUSEMOVE
+        if (Message == WM_MOUSEMOVE)
+        {
+            _HandleHyperlinkHover(lParam);
+        }
+        // Handle hyperlink click for WM_LBUTTONDOWN with Ctrl key
+        else if (Message == WM_LBUTTONDOWN && (wParam & MK_CONTROL))
+        {
+            if (_HandleHyperlinkClick(lParam))
+            {
+                // Hyperlink was clicked, don't process further
+                break;
+            }
+        }
+
         if (HandleMouseEvent(ScreenInfo, Message, wParam, lParam))
         {
             if (Message != WM_MOUSEWHEEL && Message != WM_MOUSEHWHEEL)
@@ -1015,3 +1030,166 @@ BOOL Window::PostUpdateExtendedEditKeys() const
 }
 
 #pragma endregion
+
+// Routine Description:
+// - Handles hyperlink hover detection when the mouse moves
+// Arguments:
+// - lParam - Mouse coordinates (LOWORD = x, HIWORD = y)
+// Return Value:
+// - <none>
+void Window::_HandleHyperlinkHover(const LPARAM lParam)
+{
+    // Get mouse position in client coordinates
+    POINT ptClient{
+        .x = GET_X_LPARAM(lParam),
+        .y = GET_Y_LPARAM(lParam),
+    };
+
+    // Get the screen info and text buffer
+    const auto& ScreenInfo = GetScreenInfo();
+    const auto& textBuffer = ScreenInfo.GetTextBuffer();
+
+    // Get the current font size
+    const auto& fontInfo = ScreenInfo.GetCurrentFont();
+    const auto fontSize = fontInfo.GetSize();
+
+    // Convert client coordinates to buffer coordinates
+    // First, account for the viewport scroll position
+    const auto viewport = ScreenInfo.GetViewport().ToExclusive();
+    const til::point bufferPos{
+        viewport.left + (ptClient.x / fontSize.width),
+        viewport.top + (ptClient.y / fontSize.height),
+    };
+
+    // Check if the position is within the buffer bounds
+    const auto bufferSize = textBuffer.GetSize();
+    if (bufferPos.x < 0 || bufferPos.x >= bufferSize.Width() ||
+        bufferPos.y < 0 || bufferPos.y >= bufferSize.Height())
+    {
+        return;
+    }
+
+    // Get the cell at the mouse position using GetCellDataAt (returns iterator)
+    auto cellData = textBuffer.GetCellDataAt(bufferPos);
+    const auto& cell = *cellData;
+
+    // Get the hyperlink ID from the cell's attributes
+    const auto attr = cell.TextAttr();
+    uint16_t hyperlinkId = 0;
+    if (attr.IsHyperlink())
+    {
+        hyperlinkId = attr.GetHyperlinkId();
+    }
+
+    // Notify the renderer if the hyperlink ID changed
+    if (const auto renderer = ServiceLocator::LocateGlobals().pRender)
+    {
+        renderer->UpdateHyperlinkHoveredId(hyperlinkId);
+        renderer->TriggerRedrawAll();
+    }
+
+    // Update hyperlink tooltip
+    if (hyperlinkId != 0)
+    {
+        // Get the URI
+        const auto uri = textBuffer.GetHyperlinkUriFromId(hyperlinkId);
+        
+        // DEBUG: Log hyperlink detection (for testing ToolTip)
+        // OutputDebugStringW(L"[OpenConsole] Hyperlink detected, ID: ");
+        // wchar_t idStr[16];
+        // swprintf_s(idStr, L"%d", hyperlinkId);
+        // OutputDebugStringW(idStr);
+        // OutputDebugStringW(L"\n");
+        
+        // Only update if the hyperlink changed
+        if (hyperlinkId != _currentHoveredHyperlinkId)
+        {
+            _currentHoveredHyperlinkId = hyperlinkId;
+            _currentHoveredHyperlinkUri = uri;
+            
+            if (!uri.empty())
+            {
+                // OutputDebugStringW(L"[OpenConsole] Calling _UpdateHyperlinkToolTip...\n");
+                _UpdateHyperlinkToolTip(ptClient, uri);
+            }
+            else
+            {
+                // OutputDebugStringW(L"[OpenConsole] URI is empty, not showing tooltip\n");
+            }
+        }
+    }
+    else if (_currentHoveredHyperlinkId != 0)
+    {
+        // Mouse left a hyperlink
+        // OutputDebugStringW(L"[OpenConsole] Mouse left hyperlink, hiding tooltip\n");
+        _HideHyperlinkToolTip();
+        _currentHoveredHyperlinkId = 0;
+        _currentHoveredHyperlinkUri.clear();
+    }
+}
+
+// Routine Description:
+// - Handles hyperlink click when Ctrl+Left mouse button is pressed
+// Arguments:
+// - lParam - Mouse coordinates (LOWORD = x, HIWORD = y)
+// Return Value:
+// - True if a hyperlink was clicked and opened, false otherwise
+bool Window::_HandleHyperlinkClick(const LPARAM lParam)
+{
+    // Get mouse position in client coordinates
+    POINT ptClient{
+        .x = GET_X_LPARAM(lParam),
+        .y = GET_Y_LPARAM(lParam),
+    };
+
+    // Get the screen info and text buffer
+    const auto& ScreenInfo = GetScreenInfo();
+    const auto& textBuffer = ScreenInfo.GetTextBuffer();
+
+    // Get the current font size
+    const auto& fontInfo = ScreenInfo.GetCurrentFont();
+    const auto fontSize = fontInfo.GetSize();
+
+    // Convert client coordinates to buffer coordinates
+    // First, account for the viewport scroll position
+    const auto viewport = ScreenInfo.GetViewport().ToExclusive();
+    const til::point bufferPos{
+        viewport.left + (ptClient.x / fontSize.width),
+        viewport.top + (ptClient.y / fontSize.height),
+    };
+
+    // Check if the position is within the buffer bounds
+    const auto bufferSize = textBuffer.GetSize();
+    if (bufferPos.x < 0 || bufferPos.x >= bufferSize.Width() ||
+        bufferPos.y < 0 || bufferPos.y >= bufferSize.Height())
+    {
+        return false;
+    }
+
+    // Get the cell at the mouse position
+    auto cellData = textBuffer.GetCellDataAt(bufferPos);
+    const auto& cell = *cellData;
+
+    // Get the hyperlink ID from the cell's attributes
+    const auto attr = cell.TextAttr();
+    if (!attr.IsHyperlink())
+    {
+        return false;
+    }
+
+    // Get the hyperlink URI from the buffer
+    const uint16_t hyperlinkId = attr.GetHyperlinkId();
+    const auto uri = textBuffer.GetHyperlinkUriFromId(hyperlinkId);
+    if (uri.empty())
+    {
+        return false;
+    }
+
+    // Open the URL in the default browser
+    // ShellExecuteW will handle the URL protocol and launch the appropriate application
+    HINSTANCE result = ShellExecuteW(nullptr, L"open", uri.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    
+    // Check if the operation was successful
+    // ShellExecute returns a value > 32 on success
+    return reinterpret_cast<intptr_t>(result) > 32;
+}

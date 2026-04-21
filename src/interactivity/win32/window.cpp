@@ -331,6 +331,9 @@ void Window::_UpdateSystemMetrics() const
 
                     // Locate window theming modules and try to set the dark mode.
                     LOG_IF_FAILED(Microsoft::Console::Internal::Theming::TrySetDarkMode(_hWnd));
+
+                    // Initialize hyperlink tooltip
+                    _InitializeHyperlinkToolTip();
                 }
             }
         }
@@ -1372,5 +1375,198 @@ BOOL Window::MapRect(_Inout_ til::rect* lpRect)
 
 BOOL Window::ConvertScreenToClient(_Inout_ til::point* lpPoint)
 {
-    return ScreenToClient(_hWnd, lpPoint->as_win32_point());
+    return ::ScreenToClient(_hWnd, lpPoint->as_win32_point()) != 0;
+}
+
+// Routine Description:
+// - Initializes the hyperlink tooltip control
+// Arguments:
+// - <none>
+// Return Value:
+// - <none>
+void Window::_InitializeHyperlinkToolTip()
+{
+    // Initialize common controls for ToolTip support
+    // DEBUG: These OutputDebugStringW calls are for testing ToolTip creation
+    INITCOMMONCONTROLSEX icex;
+    icex.dwSize = sizeof(INITCOMMONCONTROLSEX);
+    icex.dwICC = ICC_BAR_CLASSES | ICC_STANDARD_CLASSES;
+    InitCommonControlsEx(&icex);
+    
+    // OutputDebugStringW(L"[OpenConsole] InitCommonControlsEx called\n");
+
+    // Create tooltip control
+    _hWndToolTip = CreateWindowExW(
+        0,
+        TOOLTIPS_CLASSW,
+        nullptr,
+        WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        _hWnd,  // Parent window
+        nullptr,
+        nullptr,
+        nullptr
+    );
+
+    if (_hWndToolTip)
+    {
+        // Set max tip width
+        SendMessageW(_hWndToolTip, TTM_SETMAXTIPWIDTH, 0, 500);
+        
+        // Create tool info structure
+        TOOLINFOW toolInfo = { 0 };
+        toolInfo.cbSize = TTTOOLINFOW_V1_SIZE;
+        toolInfo.uFlags = TTF_TRACK | TTF_ABSOLUTE;
+        toolInfo.hwnd = _hWnd;
+        toolInfo.uId = (UINT_PTR)_hWnd;  // Use parent window as tool ID
+        toolInfo.lpszText = LPSTR_TEXTCALLBACK;
+        
+        // Add the tool to the tooltip control
+        const LRESULT addResult = SendMessageW(_hWndToolTip, TTM_ADDTOOL, 0, (LPARAM)&toolInfo);
+        
+        // DEBUG: Log ToolTip creation result
+        // OutputDebugStringW(L"[OpenConsole] ToolTip created, TTM_ADDTOOL result: ");
+        // wchar_t resultStr[32];
+        // swprintf_s(resultStr, L"%Id", addResult);
+        // OutputDebugStringW(resultStr);
+        // OutputDebugStringW(L"\n");
+        
+        if (!addResult)
+        {
+            // DEBUG: Log TTM_ADDTOOL failure
+            // DWORD error = GetLastError();
+            // OutputDebugStringW(L"[OpenConsole] TTM_ADDTOOL failed! Error: ");
+            // wchar_t resultStr[32];
+            // swprintf_s(resultStr, L"%d", error);
+            // OutputDebugStringW(resultStr);
+            // OutputDebugStringW(L"\n");
+        }
+    }
+    else
+    {
+        // DEBUG: Log ToolTip creation failure
+        // DWORD error = GetLastError();
+        // OutputDebugStringW(L"[OpenConsole] Failed to create ToolTip! Error: ");
+        // wchar_t errorStr[32];
+        // swprintf_s(errorStr, L"%d", error);
+        // OutputDebugStringW(errorStr);
+        // OutputDebugStringW(L"\n");
+    }
+}
+
+// Routine Description:
+// - Updates or shows the hyperlink tooltip at the mouse position
+// Arguments:
+// - ptClient - Mouse position in client coordinates
+// - uri - The hyperlink URI to display
+// Return Value:
+// - <none>
+void Window::_UpdateHyperlinkToolTip(const POINT ptClient, const std::wstring& uri)
+{
+    if (!_hWndToolTip)
+    {
+        // OutputDebugStringW(L"[OpenConsole] ToolTip handle is null!\n");
+        return;
+    }
+    
+    if (uri.empty())
+    {
+        // OutputDebugStringW(L"[OpenConsole] URI is empty!\n");
+        return;
+    }
+
+    // OutputDebugStringW(L"[OpenConsole] Updating ToolTip...\n");
+
+    // Convert client coordinates to screen coordinates
+    POINT ptScreen = ptClient;
+    ClientToScreen(_hWnd, &ptScreen);
+
+    // DEBUG: Log coordinates (for testing ToolTip positioning)
+    // OutputDebugStringW(L"[OpenConsole] Mouse client coords: (");
+    // wchar_t coordStr[64];
+    // swprintf_s(coordStr, L"%d, %d", ptClient.x, ptClient.y);
+    // OutputDebugStringW(coordStr);
+    // OutputDebugStringW(L")\n");
+    
+    // OutputDebugStringW(L"[OpenConsole] Mouse screen coords: (");
+    // swprintf_s(coordStr, L"%d, %d", ptScreen.x, ptScreen.y);
+    // OutputDebugStringW(coordStr);
+    // OutputDebugStringW(L")\n");
+
+    // Create tooltip text: "<URI>\nCtrl+Click to follow link"
+    std::wstring tooltipText = uri;
+    tooltipText += L"\nCtrl+Click to follow link";
+
+    // Truncate URI if too long (max 300 chars)
+    if (tooltipText.length() > 300)
+    {
+        tooltipText = tooltipText.substr(0, 297) + L"...";
+    }
+
+    // Set up tool info for TRACKING tooltip
+    TOOLINFOW toolInfo = { 0 };
+    toolInfo.cbSize = TTTOOLINFOW_V1_SIZE;
+    toolInfo.uFlags = TTF_TRACK | TTF_ABSOLUTE;
+    toolInfo.hwnd = _hWnd;
+    toolInfo.uId = (UINT_PTR)_hWnd;
+    toolInfo.lpszText = const_cast<LPWSTR>(tooltipText.c_str());
+
+    // Position tooltip near the mouse (offset to avoid covering the link)
+    const int xOffset = 10;
+    const int yOffset = 20;
+    const LPARAM trackPos = MAKELONG(ptScreen.x + xOffset, ptScreen.y + yOffset);
+    
+    // OutputDebugStringW(L"[OpenConsole] ToolTip target position: (");
+    // swprintf_s(coordStr, L"%d, %d", ptScreen.x + xOffset, ptScreen.y + yOffset);
+    // OutputDebugStringW(coordStr);
+    // OutputDebugStringW(L")\n");
+    
+    // OutputDebugStringW(L"[OpenConsole] Setting ToolTip position...\n");
+    SendMessageW(_hWndToolTip, TTM_TRACKPOSITION, 0, trackPos);
+
+    // OutputDebugStringW(L"[OpenConsole] Updating ToolTip text...\n");
+    SendMessageW(_hWndToolTip, TTM_UPDATETIPTEXT, 0, (LPARAM)&toolInfo);
+
+    // OutputDebugStringW(L"[OpenConsole] Activating ToolTip...\n");
+    const LRESULT result = SendMessageW(_hWndToolTip, TTM_TRACKACTIVATE, TRUE, (LPARAM)&toolInfo);
+    
+    if (result)
+    {
+        // OutputDebugStringW(L"[OpenConsole] ToolTip activated successfully!\n");
+    }
+    else
+    {
+        // DEBUG: Log ToolTip activation failure
+        // DWORD error = GetLastError();
+        // OutputDebugStringW(L"[OpenConsole] Failed to activate ToolTip! Error: ");
+        // wchar_t errorStr[32];
+        // swprintf_s(errorStr, L"%d", error);
+        // OutputDebugStringW(errorStr);
+        // OutputDebugStringW(L"\n");
+    }
+}
+
+// Routine Description:
+// - Hides the hyperlink tooltip
+// Arguments:
+// - <none>
+// Return Value:
+// - <none>
+void Window::_HideHyperlinkToolTip()
+{
+    if (_hWndToolTip && _currentHoveredHyperlinkId != 0)
+    {
+        // Deactivate the tooltip
+        TOOLINFOW toolInfo = { 0 };
+        toolInfo.cbSize = TTTOOLINFOW_V1_SIZE;
+        toolInfo.hwnd = _hWnd;
+        toolInfo.uId = (UINT_PTR)_hWnd;
+        SendMessageW(_hWndToolTip, TTM_TRACKACTIVATE, FALSE, (LPARAM)&toolInfo);
+        
+        _currentHoveredHyperlinkId = 0;
+        _currentHoveredHyperlinkUri.clear();
+    }
 }

@@ -1890,6 +1890,9 @@ void AdaptDispatch::_ModeParamsHelper(const DispatchTypes::ModeParams param, con
         break;
     case DispatchTypes::ModeParams::GCM_GraphemeClusterMode:
         break;
+    case DispatchTypes::ModeParams::XTERM_ModifyOtherKeys:
+        _terminalInput.SetModifyOtherKeys(enable);
+        break;
     case DispatchTypes::ModeParams::W32IM_Win32InputMode:
         _terminalInput.SetInputMode(TerminalInput::Mode::Win32, enable);
         // ConPTY requests the Win32InputMode on startup and disables it on shutdown. When nesting ConPTY inside
@@ -2031,6 +2034,9 @@ void AdaptDispatch::RequestMode(const DispatchTypes::ModeParams param)
         break;
     case DispatchTypes::ModeParams::GCM_GraphemeClusterMode:
         state = mapPerm(CodepointWidthDetector::Singleton().GetMode() == TextMeasurementMode::Graphemes);
+        break;
+    case DispatchTypes::ModeParams::XTERM_ModifyOtherKeys:
+        state = mapTemp(_terminalInput.IsModifyOtherKeysEnabled());
         break;
     case DispatchTypes::ModeParams::W32IM_Win32InputMode:
         state = mapTemp(_terminalInput.GetInputMode(TerminalInput::Mode::Win32));

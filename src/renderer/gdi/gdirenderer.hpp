@@ -81,6 +81,7 @@ namespace Microsoft::Console::Render
         [[nodiscard]] HRESULT GetDirtyArea(std::span<const til::rect>& area) noexcept override;
         [[nodiscard]] HRESULT GetFontSize(_Out_ til::size* const pFontSize) noexcept override;
         [[nodiscard]] HRESULT IsGlyphWideByFont(const std::wstring_view glyph, _Out_ bool* const pResult) noexcept override;
+        void UpdateHyperlinkHoveredId(uint16_t hoveredId) noexcept override;
 
     protected:
         [[nodiscard]] HRESULT _DoUpdateTitle(_In_ const std::wstring_view newTitle) noexcept override;
@@ -183,6 +184,9 @@ namespace Microsoft::Console::Render
         // a fallback font that can render it properly.
         HFONT _fallbackFont = nullptr;
         std::wstring _fallbackFontName;
+        
+        // Hyperlink support
+        uint16_t _hyperlinkHoveredId = 0;
         
         // Checks if a character has a valid glyph in the current font
         bool _IsGlyphPresent(wchar_t ch) const noexcept;

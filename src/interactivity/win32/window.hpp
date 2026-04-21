@@ -132,6 +132,11 @@ namespace Microsoft::Console::Interactivity::Win32
         [[nodiscard]] HRESULT _HandlePaint() const;
         void _HandleWindowPosChanged(const LPARAM lParam);
         LRESULT _HandleGetDpiScaledSize(UINT dpiNew, _Inout_ SIZE* pSizeNew) const;
+        void _HandleHyperlinkHover(const LPARAM lParam);
+        bool _HandleHyperlinkClick(const LPARAM lParam);
+        void _InitializeHyperlinkToolTip();
+        void _UpdateHyperlinkToolTip(const POINT ptClient, const std::wstring& uri);
+        void _HideHyperlinkToolTip();
 
         // Accessibility/UI Automation
         [[nodiscard]] LRESULT _HandleGetObject(const HWND hwnd,
@@ -181,5 +186,10 @@ namespace Microsoft::Console::Interactivity::Win32
 
         static void s_ConvertWindowPosToWindowRect(const LPWINDOWPOS lpWindowPos,
                                                    _Out_ til::rect* const prc);
+
+        // Hyperlink tooltip support
+        HWND _hWndToolTip = nullptr;
+        uint16_t _currentHoveredHyperlinkId = 0;
+        std::wstring _currentHoveredHyperlinkUri;
     };
 }

@@ -929,3 +929,14 @@ bool GdiEngine::_IsGlyphPresent(wchar_t ch) const noexcept
     *pFont = nullptr;
     return S_FALSE;
 }
+
+// Routine Description:
+// - Updates the ID of the currently hovered hyperlink
+// Arguments:
+// - hoveredId - The ID of the hyperlink being hovered (0 if none)
+// Return Value:
+// - <none>
+void GdiEngine::UpdateHyperlinkHoveredId(uint16_t hoveredId) noexcept
+{
+    _hyperlinkHoveredId = hoveredId;
+}
