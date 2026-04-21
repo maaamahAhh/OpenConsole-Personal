@@ -44,6 +44,7 @@ using namespace Microsoft::Console::Interactivity;
 using namespace Microsoft::Console::Render;
 
 ATOM Window::s_atomWindowClass = 0;
+ATOM Window::s_atomToolTipClass = 0;
 
 Window::Window() :
     _fIsInFullscreen(false),
@@ -1379,6 +1380,71 @@ BOOL Window::ConvertScreenToClient(_Inout_ til::point* lpPoint)
 }
 
 // Routine Description:
+// - Custom tooltip window procedure - draws tooltip appearance manually
+// Arguments:
+// - hWnd - Window handle
+// - uMsg - Message identifier
+// - wParam - First message parameter
+// - lParam - Second message parameter
+// Return Value:
+// - LRESULT - Message processing result
+LRESULT CALLBACK Window::s_HyperlinkTipWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    switch (uMsg)
+    {
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hWnd, &ps);
+
+        RECT rc;
+        GetClientRect(hWnd, &rc);
+
+        // Draw background (tooltip yellow)
+        HBRUSH hBrush = CreateSolidBrush(RGB(255, 255, 225));
+        FillRect(hdc, &rc, hBrush);
+        DeleteObject(hBrush);
+
+        // Draw border
+        HPEN hPen = CreatePen(PS_SOLID, 1, RGB(0, 0, 0));
+        HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);
+        HBRUSH hOldBrush = (HBRUSH)SelectObject(hdc, GetStockObject(NULL_BRUSH));
+        Rectangle(hdc, rc.left, rc.top, rc.right - 1, rc.bottom - 1);
+        SelectObject(hdc, hOldPen);
+        SelectObject(hdc, hOldBrush);
+        DeleteObject(hPen);
+
+        // Get and draw text
+        wchar_t text[512] = { 0 };
+        GetWindowTextW(hWnd, text, 512);
+
+        HFONT hFont = (HFONT)SendMessageW(hWnd, WM_GETFONT, 0, 0);
+        HFONT hOldFont = (HFONT)SelectObject(hdc, hFont);
+
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, RGB(0, 0, 0));
+
+        RECT textRc = rc;
+        textRc.left += 4;
+        textRc.top += 2;
+        textRc.right -= 4;
+        textRc.bottom -= 2;
+        DrawTextW(hdc, text, -1, &textRc, DT_LEFT | DT_TOP | DT_WORDBREAK);
+
+        SelectObject(hdc, hOldFont);
+
+        EndPaint(hWnd, &ps);
+        return 0;
+    }
+    case WM_NCHITTEST:
+        return HTTRANSPARENT;
+    case WM_ERASEBKGND:
+        return TRUE;
+    }
+    return DefWindowProcW(hWnd, uMsg, wParam, lParam);
+}
+
+// Routine Description:
 // - Initializes the hyperlink tooltip control
 // Arguments:
 // - <none>
@@ -1386,186 +1452,98 @@ BOOL Window::ConvertScreenToClient(_Inout_ til::point* lpPoint)
 // - <none>
 void Window::_InitializeHyperlinkToolTip()
 {
-    // Initialize common controls for ToolTip support
-    // DEBUG: These OutputDebugStringW calls are for testing ToolTip creation
-    INITCOMMONCONTROLSEX icex;
-    icex.dwSize = sizeof(INITCOMMONCONTROLSEX);
-    icex.dwICC = ICC_BAR_CLASSES | ICC_STANDARD_CLASSES;
-    InitCommonControlsEx(&icex);
-    
-    // OutputDebugStringW(L"[OpenConsole] InitCommonControlsEx called\n");
-
-    // Create tooltip control
-    _hWndToolTip = CreateWindowExW(
-        0,
-        TOOLTIPS_CLASSW,
-        nullptr,
-        WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
-        CW_USEDEFAULT,
-        CW_USEDEFAULT,
-        CW_USEDEFAULT,
-        CW_USEDEFAULT,
-        _hWnd,  // Parent window
-        nullptr,
-        nullptr,
-        nullptr
-    );
-
-    if (_hWndToolTip)
+    // Register custom tooltip window class (does not depend on comctl32.dll)
+    if (s_atomToolTipClass == 0)
     {
-        // Set max tip width
-        SendMessageW(_hWndToolTip, TTM_SETMAXTIPWIDTH, 0, 500);
-        
-        // Create tool info structure
-        TOOLINFOW toolInfo = { 0 };
-        toolInfo.cbSize = TTTOOLINFOW_V1_SIZE;
-        toolInfo.uFlags = TTF_TRACK | TTF_ABSOLUTE;
-        toolInfo.hwnd = _hWnd;
-        toolInfo.uId = (UINT_PTR)_hWnd;  // Use parent window as tool ID
-        toolInfo.lpszText = LPSTR_TEXTCALLBACK;
-        
-        // Add the tool to the tooltip control
-        const LRESULT addResult = SendMessageW(_hWndToolTip, TTM_ADDTOOL, 0, (LPARAM)&toolInfo);
-        
-        // DEBUG: Log ToolTip creation result
-        // OutputDebugStringW(L"[OpenConsole] ToolTip created, TTM_ADDTOOL result: ");
-        // wchar_t resultStr[32];
-        // swprintf_s(resultStr, L"%Id", addResult);
-        // OutputDebugStringW(resultStr);
-        // OutputDebugStringW(L"\n");
-        
-        if (!addResult)
-        {
-            // DEBUG: Log TTM_ADDTOOL failure
-            // DWORD error = GetLastError();
-            // OutputDebugStringW(L"[OpenConsole] TTM_ADDTOOL failed! Error: ");
-            // wchar_t resultStr[32];
-            // swprintf_s(resultStr, L"%d", error);
-            // OutputDebugStringW(resultStr);
-            // OutputDebugStringW(L"\n");
-        }
+        WNDCLASSEXW wc = { 0 };
+        wc.cbSize = sizeof(WNDCLASSEXW);
+        wc.style = CS_HREDRAW | CS_VREDRAW;
+        wc.lpfnWndProc = s_HyperlinkTipWndProc;
+        wc.hInstance = GetModuleHandleW(NULL);
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hbrBackground = nullptr;
+        wc.lpszClassName = L"OpenConsoleHyperlinkTip";
+
+        s_atomToolTipClass = RegisterClassExW(&wc);
     }
-    else
+
+    if (s_atomToolTipClass != 0)
     {
-        // DEBUG: Log ToolTip creation failure
-        // DWORD error = GetLastError();
-        // OutputDebugStringW(L"[OpenConsole] Failed to create ToolTip! Error: ");
-        // wchar_t errorStr[32];
-        // swprintf_s(errorStr, L"%d", error);
-        // OutputDebugStringW(errorStr);
-        // OutputDebugStringW(L"\n");
+        _hWndToolTip = CreateWindowExW(
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            L"OpenConsoleHyperlinkTip",
+            L"",
+            WS_POPUP,
+            0, 0, 0, 0,
+            _hWnd,
+            nullptr,
+            GetModuleHandleW(NULL),
+            nullptr
+        );
+
+        if (_hWndToolTip)
+        {
+            HFONT hFont = CreateFontW(
+                -MulDiv(9, GetDeviceCaps(GetDC(_hWndToolTip), LOGPIXELSY), 72),
+                0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+            SendMessageW(_hWndToolTip, WM_SETFONT, (WPARAM)hFont, FALSE);
+        }
     }
 }
 
-// Routine Description:
-// - Updates or shows the hyperlink tooltip at the mouse position
-// Arguments:
-// - ptClient - Mouse position in client coordinates
-// - uri - The hyperlink URI to display
-// Return Value:
-// - <none>
 void Window::_UpdateHyperlinkToolTip(const POINT ptClient, const std::wstring& uri)
 {
     if (!_hWndToolTip)
     {
-        // OutputDebugStringW(L"[OpenConsole] ToolTip handle is null!\n");
         return;
     }
-    
+
     if (uri.empty())
     {
-        // OutputDebugStringW(L"[OpenConsole] URI is empty!\n");
         return;
     }
 
-    // OutputDebugStringW(L"[OpenConsole] Updating ToolTip...\n");
-
-    // Convert client coordinates to screen coordinates
-    POINT ptScreen = ptClient;
-    ClientToScreen(_hWnd, &ptScreen);
-
-    // DEBUG: Log coordinates (for testing ToolTip positioning)
-    // OutputDebugStringW(L"[OpenConsole] Mouse client coords: (");
-    // wchar_t coordStr[64];
-    // swprintf_s(coordStr, L"%d, %d", ptClient.x, ptClient.y);
-    // OutputDebugStringW(coordStr);
-    // OutputDebugStringW(L")\n");
-    
-    // OutputDebugStringW(L"[OpenConsole] Mouse screen coords: (");
-    // swprintf_s(coordStr, L"%d, %d", ptScreen.x, ptScreen.y);
-    // OutputDebugStringW(coordStr);
-    // OutputDebugStringW(L")\n");
-
-    // Create tooltip text: "<URI>\nCtrl+Click to follow link"
     std::wstring tooltipText = uri;
     tooltipText += L"\nCtrl+Click to follow link";
 
-    // Truncate URI if too long (max 300 chars)
     if (tooltipText.length() > 300)
     {
         tooltipText = tooltipText.substr(0, 297) + L"...";
     }
 
-    // Set up tool info for TRACKING tooltip
-    TOOLINFOW toolInfo = { 0 };
-    toolInfo.cbSize = TTTOOLINFOW_V1_SIZE;
-    toolInfo.uFlags = TTF_TRACK | TTF_ABSOLUTE;
-    toolInfo.hwnd = _hWnd;
-    toolInfo.uId = (UINT_PTR)_hWnd;
-    toolInfo.lpszText = const_cast<LPWSTR>(tooltipText.c_str());
+    SetWindowTextW(_hWndToolTip, tooltipText.c_str());
 
-    // Position tooltip near the mouse (offset to avoid covering the link)
-    const int xOffset = 10;
-    const int yOffset = 20;
-    const LPARAM trackPos = MAKELONG(ptScreen.x + xOffset, ptScreen.y + yOffset);
-    
-    // OutputDebugStringW(L"[OpenConsole] ToolTip target position: (");
-    // swprintf_s(coordStr, L"%d, %d", ptScreen.x + xOffset, ptScreen.y + yOffset);
-    // OutputDebugStringW(coordStr);
-    // OutputDebugStringW(L")\n");
-    
-    // OutputDebugStringW(L"[OpenConsole] Setting ToolTip position...\n");
-    SendMessageW(_hWndToolTip, TTM_TRACKPOSITION, 0, trackPos);
+    // Calculate text size
+    HDC hdc = GetDC(_hWndToolTip);
+    HFONT hFont = (HFONT)SendMessageW(_hWndToolTip, WM_GETFONT, 0, 0);
+    HFONT hOldFont = (HFONT)SelectObject(hdc, hFont);
 
-    // OutputDebugStringW(L"[OpenConsole] Updating ToolTip text...\n");
-    SendMessageW(_hWndToolTip, TTM_UPDATETIPTEXT, 0, (LPARAM)&toolInfo);
+    RECT textRc = { 0, 0, 500, 0 };
+    DrawTextW(hdc, tooltipText.c_str(), -1, &textRc, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_CALCRECT);
 
-    // OutputDebugStringW(L"[OpenConsole] Activating ToolTip...\n");
-    const LRESULT result = SendMessageW(_hWndToolTip, TTM_TRACKACTIVATE, TRUE, (LPARAM)&toolInfo);
-    
-    if (result)
-    {
-        // OutputDebugStringW(L"[OpenConsole] ToolTip activated successfully!\n");
-    }
-    else
-    {
-        // DEBUG: Log ToolTip activation failure
-        // DWORD error = GetLastError();
-        // OutputDebugStringW(L"[OpenConsole] Failed to activate ToolTip! Error: ");
-        // wchar_t errorStr[32];
-        // swprintf_s(errorStr, L"%d", error);
-        // OutputDebugStringW(errorStr);
-        // OutputDebugStringW(L"\n");
-    }
+    SelectObject(hdc, hOldFont);
+    ReleaseDC(_hWndToolTip, hdc);
+
+    int width = textRc.right - textRc.left + 8;
+    int height = textRc.bottom - textRc.top + 4;
+
+    // Convert client coordinates to screen coordinates
+    POINT ptScreen = ptClient;
+    ClientToScreen(_hWnd, &ptScreen);
+
+    int x = ptScreen.x + 10;
+    int y = ptScreen.y + 20;
+
+    SetWindowPos(_hWndToolTip, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
 }
 
-// Routine Description:
-// - Hides the hyperlink tooltip
-// Arguments:
-// - <none>
-// Return Value:
-// - <none>
 void Window::_HideHyperlinkToolTip()
 {
     if (_hWndToolTip && _currentHoveredHyperlinkId != 0)
     {
-        // Deactivate the tooltip
-        TOOLINFOW toolInfo = { 0 };
-        toolInfo.cbSize = TTTOOLINFOW_V1_SIZE;
-        toolInfo.hwnd = _hWnd;
-        toolInfo.uId = (UINT_PTR)_hWnd;
-        SendMessageW(_hWndToolTip, TTM_TRACKACTIVATE, FALSE, (LPARAM)&toolInfo);
-        
+        ShowWindow(_hWndToolTip, SW_HIDE);
         _currentHoveredHyperlinkId = 0;
         _currentHoveredHyperlinkUri.clear();
     }

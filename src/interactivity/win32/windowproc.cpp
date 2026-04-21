@@ -1091,37 +1091,21 @@ void Window::_HandleHyperlinkHover(const LPARAM lParam)
     // Update hyperlink tooltip
     if (hyperlinkId != 0)
     {
-        // Get the URI
         const auto uri = textBuffer.GetHyperlinkUriFromId(hyperlinkId);
-        
-        // DEBUG: Log hyperlink detection (for testing ToolTip)
-        // OutputDebugStringW(L"[OpenConsole] Hyperlink detected, ID: ");
-        // wchar_t idStr[16];
-        // swprintf_s(idStr, L"%d", hyperlinkId);
-        // OutputDebugStringW(idStr);
-        // OutputDebugStringW(L"\n");
-        
-        // Only update if the hyperlink changed
+
         if (hyperlinkId != _currentHoveredHyperlinkId)
         {
             _currentHoveredHyperlinkId = hyperlinkId;
             _currentHoveredHyperlinkUri = uri;
-            
+
             if (!uri.empty())
             {
-                // OutputDebugStringW(L"[OpenConsole] Calling _UpdateHyperlinkToolTip...\n");
                 _UpdateHyperlinkToolTip(ptClient, uri);
-            }
-            else
-            {
-                // OutputDebugStringW(L"[OpenConsole] URI is empty, not showing tooltip\n");
             }
         }
     }
     else if (_currentHoveredHyperlinkId != 0)
     {
-        // Mouse left a hyperlink
-        // OutputDebugStringW(L"[OpenConsole] Mouse left hyperlink, hiding tooltip\n");
         _HideHyperlinkToolTip();
         _currentHoveredHyperlinkId = 0;
         _currentHoveredHyperlinkUri.clear();

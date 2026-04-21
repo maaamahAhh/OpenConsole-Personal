@@ -138,6 +138,10 @@ namespace Microsoft::Console::Interactivity::Win32
         void _UpdateHyperlinkToolTip(const POINT ptClient, const std::wstring& uri);
         void _HideHyperlinkToolTip();
 
+        // Custom tooltip window class
+        static LRESULT CALLBACK s_HyperlinkTipWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+        static ATOM s_atomToolTipClass;
+
         // Accessibility/UI Automation
         [[nodiscard]] LRESULT _HandleGetObject(const HWND hwnd,
                                                const WPARAM wParam,
